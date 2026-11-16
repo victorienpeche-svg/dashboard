@@ -423,7 +423,7 @@ function genUUID(){
 }
 
 async function generateRsaPublicKeyPem(){
-  if(!window.crypto||!window.crypto.subtle)throw new Error("Ce navigateur bloque WebCrypto (ouvre l'application via https:// et non en fichier local).");
+  if(!window.crypto||!window.crypto.subtle)throw new Error("Ce navigateur bloque WebCrypto (ouvre l'application via https://).");
   const kp=await crypto.subtle.generateKey(
     {name:'RSASSA-PKCS1-v1_5',modulusLength:2048,publicExponent:new Uint8Array([1,0,1]),hash:'SHA-256'},
     true,
@@ -434,68 +434,6 @@ async function generateRsaPublicKeyPem(){
   let bin='';for(let i=0;i<bytes.length;i++)bin+=String.fromCharCode(bytes[i]);
   const b64=btoa(bin).match(/.{1,64}/g).join('\n');
   return`-----BEGIN PUBLIC KEY-----\n${b64}\n-----END PUBLIC KEY-----`;
-}
-
-function buildProxyUrls(url,cfg){
-  const list=[];
-  const custom=(cfg.customProxy||'').trim();
-  if(custom){
-    if(custom.includes('{url}'))list.push(custom.replace('{url}',encodeURIComponent(url)));
-    else if(custom.endsWith('?')||custom.endsWith('='))list.push(custom+url);
-    else list.push(custom.replace(/\/+$/,'')+'/?url='+encodeURIComponent(url));
-  }
-  if(cfg.corsProxy){
-    // Corsfix accepte POST, OPTIONS preflight et en-têtes personnalisés sans clé API
-    list.push(`https://proxy.corsfix.com/?${url}`);
-  }
-  return list;
-}
-
-async function tcFetchJson(url,opts,cfg){
-  const doCall=async targetUrl=>{
-    const r=await fetch(targetUrl,opts);
-    const txt=await r.text();
-    const json=safeJSON(txt);
-    if(!r.ok){
-      const apiMsg=json&&json.Error&&json.Error[0]&&json.Error[0].error_description;
-      throw new Error(apiMsg||`Erreur serveur HTTP ${r.status}`);
-    }
-    if(!json)throw new Error('Réponse non JSON reçue du relais.');
-    return json;
-  };
-  const targets=[...buildProxyUrls(url,cfg),url];
-  let lastErr=null;
-  for(const t of targets){
-    try{return await doCall(t)}catch(err){lastErr=err}
-  }
-  throw lastErr||new Error('Échec de connexion réseau');
-}
-
-async function getTricountSession(cfg,forceNew=false){
-  if(!forceNew&&cfg.session&&cfg.session.token&&cfg.session.userId&&cfg.session.appId){
-    return cfg.session;
-  }
-  const appId=genUUID();
-  const pubPem=await generateRsaPublicKeyPem();
-  const res=await tcFetchJson(`${TC_API}/v1/session-registry-installation`,{
-    method:'POST',
-    headers:{
-      'Content-Type':'application/json',
-      'app-id':appId,
-      'X-Bunq-Client-Request-Id':genUUID()
-    },
-    body:JSON.stringify({
-      app_installation_id:appId,
-      client_public_key:pubPem,
-      device_description:'CapDepenses Web'
-    })
-  },cfg);
-  const items=res.Response||[];
-  const tokObj=items.find(x=>x.Token);
-  const usrObj=items.find(x=>x.UserPerson);
-  if(!tokObj||!usrObj)throw new Error('Impossible d’ouvrir une session Tricount.');
-  cfg.session={token:tokObj.Token.token,userId:usrObj.UserPerson.id,appId};
-  return cfg.session;
 }
 
 function memberDisplayName(m){
@@ -541,6 +479,29 @@ function registryToCsv(registry){
   return lines.join('\n');
 }
 
+async function fetchViaCustomWorker(customUrl,key){
+  const base=customUrl.trim().replace(/\/+$/,'');
+  const reqUrl=`${base}/?key=${encodeURIComponent(key)}`;
+  let r;
+  try{
+    r=await fetch(reqUrl);
+  }catch(netErr){
+    throw new Error(`Impossible de joindre ton relais Cloudflare (${base}). Vérifie l'orthographe de l'URL et ta connexion internet.`);
+  }
+  const txt=await r.text();
+  if(/Hello World/i.test(txt)){
+    throw new Error("Ton relais Cloudflare affiche encore « Hello World! ». Ouvre Cloudflare → relais-tricount → Edit code, colle le code du relais et clique sur Deploy.");
+  }
+  const json=safeJSON(txt);
+  if(!json){
+    throw new Error(`Réponse inattendue de ton relais Cloudflare (HTTP ${r.status}). Vérifie que le code du Worker a bien été déployé.`);
+  }
+  if(!r.ok||json.error){
+    throw new Error(json.error||`Erreur du relais Cloudflare (HTTP ${r.status})`);
+  }
+  return json;
+}
+
 async function syncTricountDirect(isAuto=false){
   const cfg=tcCfg();
   if(tcBusy)return;
@@ -549,34 +510,18 @@ async function syncTricountDirect(isAuto=false){
     if(!isAuto){cfg.err='Colle ton lien de partage Tricount (ex. https://tricount.com/...) avant de synchroniser.';save();render()}
     return;
   }
+  const custom=(cfg.customProxy||'').trim();
+  if(!custom){
+    if(!isAuto){cfg.err='Renseigne d’abord l’adresse de ton relais Cloudflare (https://...workers.dev).';save();render()}
+    return;
+  }
   tcBusy=true;
   cfg.err='';
   render();
   try{
-    let sess=await getTricountSession(cfg,false);
-    let data;
-    try{
-      data=await tcFetchJson(`${TC_API}/v1/user/${sess.userId}/registry?public_identifier_token=${encodeURIComponent(key)}`,{
-        method:'GET',
-        headers:{
-          'app-id':sess.appId,
-          'X-Bunq-Client-Request-Id':genUUID(),
-          'X-Bunq-Client-Authentication':sess.token
-        }
-      },cfg);
-    }catch(firstErr){
-      sess=await getTricountSession(cfg,true);
-      data=await tcFetchJson(`${TC_API}/v1/user/${sess.userId}/registry?public_identifier_token=${encodeURIComponent(key)}`,{
-        method:'GET',
-        headers:{
-          'app-id':sess.appId,
-          'X-Bunq-Client-Request-Id':genUUID(),
-          'X-Bunq-Client-Authentication':sess.token
-        }
-      },cfg);
-    }
+    const data=await fetchViaCustomWorker(custom,key);
     const regItem=(data.Response||[]).find(x=>x.Registry);
-    if(!regItem||!regItem.Registry)throw new Error('Groupe Tricount introuvable. Vérifie que le lien de partage est bien actif.');
+    if(!regItem||!regItem.Registry)throw new Error('Groupe Tricount introuvable. Vérifie que ton lien de partage est bien actif.');
     const csvText=registryToCsv(regItem.Registry);
     if(S.demo){S.tx=S.tx.filter(t=>!String(t.id).startsWith('demo'));S.demo=false}
     const r=importText(csvText,'tricount',S);
@@ -586,10 +531,7 @@ async function syncTricountDirect(isAuto=false){
     cfg.msg=`${groupTitle}${r.added} nouvelle${r.added>1?'s':''} dépense${r.added>1?'s':''} importée${r.added>1?'s':''} (${r.skipped} déjà présente${r.skipped>1?'s':''}).`+(r.noMe?' Indique ton prénom Tricount pour ta part exacte.':'');
     save();
   }catch(e){
-    const m=e&&e.message?e.message:'erreur réseau';
-    cfg.err=/Failed to fetch|NetworkError|Load failed/i.test(m)
-      ?`Blocage réseau/CORS (${m}). Vérifie que l'application est ouverte en HTTPS et non en fichier local, ou renseigne ton relais Cloudflare ci-dessous.`
-      :'Tricount : '+m;
+    cfg.err=e&&e.message?e.message:'Erreur de synchronisation Tricount.';
     save();
   }finally{
     tcBusy=false;
@@ -600,14 +542,14 @@ async function syncTricountDirect(isAuto=false){
 
 function checkDailyTricountSync(){
   const cfg=tcCfg();
-  if(!cfg.enabled||!cfg.url||!cfg.url.trim()||tcBusy)return;
+  if(!cfg.enabled||!cfg.url||!cfg.url.trim()||!(cfg.customProxy||'').trim()||tcBusy)return;
   if(Date.now()-(cfg.lastSync||0)>=DAY_MS){
     syncTricountDirect(true);
   }
 }
 
 function chip(c,p){if(p===null)return'<span class="chip flat">nouveau</span>';const r=Math.round(p);if(Math.abs(r)<1)return'<span class="chip flat">= stable</span>';return`<span class="chip ${r>0?'up':'down'}">${r>0?'▲ +':'▼ '}${r} %</span>`}
-function txRow(t){const l=t.src==='tricount'?'T':'R';
+function txRow(t){
   return`<button class="tx ${t.dup?'dup':''}" data-act="edit" data-id="${esc(t.id)}"><span class="avatar" style="background:${catCol(t.cat)}" aria-hidden="true">${esc((t.desc||'?').trim().charAt(0).toUpperCase())}</span>
   <span class="t"><div><b>${esc(t.desc)}</b></div><div class="xs muted">${shortDate(t.date)} · ${esc(t.cat)} · ${t.src==='tricount'?'Tricount':t.src==='revolut'?'Revolut':'Manuel'}${t.src==='tricount'&&t.total&&t.total!==t.amt?` · ma part sur ${fmt(t.total)}`:''}${t.dup?' · doublon Tricount':''}${t.ex?' · exceptionnelle':''}</div></span><span class="amt">${fmt(t.amt)}</span></button>`}
 function render(){
@@ -624,7 +566,7 @@ function render(){
   notify(t)}
 function rHome(t){
   const P=periods(S.tx,t),B=S.budgets,al=computeAlerts(S,t),cm=byCat(S.tx,P.ms,t),pm=byCat(S.tx,P.pms,P.pend);
-  const bp=B.global>0?P.month/B.global*100:0,fp=B.global>0?Math.min(P.forecast/B.global*100,100):0;
+  const bp=B.global>0?P.month/B.global*100:0;
   const top=Object.entries(cm).sort((a,b)=>b[1]-a[1]).slice(0,5);
   const rec=[...S.tx].filter(x=>!x.dup).sort((a,b)=>a.date<b.date?1:a.date>b.date?-1:0).slice(0,5);
   return`${S.demo?`<div class="alert info"><div><b>Tu vois des données d'exemple</b><span class="small muted">Colle ton lien Tricount et importe ton relevé Revolut dans Réglages pour les remplacer.</span></div></div>`:''}
@@ -693,26 +635,22 @@ function rSet(t){
       <h2 style="margin:0">Tricount automatique (1x / jour)</h2>
       <span class="pill">${tcBusy?'Synchro…':TC.enabled?'Auto 24h':'Manuel'}</span>
     </div>
-    <p class="small muted" style="margin:0">Dans l'appli Tricount, ouvre ton groupe, appuie sur <b>Partager</b> et copie le lien. L'application le lit et l'actualise <b>une fois par jour</b>.</p>
+    <p class="small muted" style="margin:0">Dans l'appli Tricount, ouvre ton groupe, appuie sur <b>Partager</b> et copie le lien. L'application le lit via ton relais Cloudflare et l'actualise <b>une fois par jour</b>.</p>
     <div class="field">
       <label for="tcurl">Lien de partage Tricount</label>
-      <input type="url" id="tcurl" value="${esc(TC.url)}" placeholder="https://tricount.com/fr/...">
+      <input type="url" id="tcurl" value="${esc(TC.url)}" placeholder="https://tricount.com/...">
     </div>
     <div class="field">
       <label for="me">Ton prénom dans Tricount (pour calculer ta part exacte)</label>
-      <input type="text" id="me" value="${esc(S.me)}" placeholder="ex. Victorien">
+      <input type="text" id="me" value="${esc(S.me)}" placeholder="ex. Vic">
     </div>
     <div class="field">
-      <label for="tccustom">Relais Cloudflare personnel (optionnel, recommandé si le relais public est saturé)</label>
-      <input type="url" id="tccustom" value="${esc(TC.customProxy)}" placeholder="https://ton-relais.ton-compte.workers.dev">
+      <label for="tccustom">Relais Cloudflare personnel</label>
+      <input type="url" id="tccustom" value="${esc(TC.customProxy)}" placeholder="https://relais-tricount.victorien-peche.workers.dev">
     </div>
     <label class="row between small" style="cursor:pointer">
       <span>Actualiser automatiquement 1 fois par jour (toutes les 24 h)</span>
       <input type="checkbox" id="tcenabled" ${TC.enabled?'checked':''}>
-    </label>
-    <label class="row between small" style="cursor:pointer">
-      <span>Activer le relais CORS public de secours</span>
-      <input type="checkbox" id="tcproxy" ${TC.corsProxy?'checked':''}>
     </label>
     <div class="row" style="flex-wrap:wrap">
       <button class="btn" data-act="tcsync" ${tcBusy?'disabled':''}>${tcBusy?'Synchronisation en cours…':'Synchroniser maintenant'}</button>
@@ -831,7 +769,6 @@ document.addEventListener('click',async e=>{
     if($('tccustom'))tcCfg().customProxy=$('tccustom').value.trim();
     if($('me'))S.me=$('me').value.trim();
     if($('tcenabled'))tcCfg().enabled=$('tcenabled').checked;
-    if($('tcproxy'))tcCfg().corsProxy=$('tcproxy').checked;
     save();
     syncTricountDirect(false);
   }
@@ -849,7 +786,6 @@ document.addEventListener('change',e=>{const t=e.target;
   else if(t.id==='tcurl'){tcCfg().url=t.value.trim();save()}
   else if(t.id==='tccustom'){tcCfg().customProxy=t.value.trim();save()}
   else if(t.id==='tcenabled'){tcCfg().enabled=t.checked;save();if(t.checked)checkDailyTricountSync();render()}
-  else if(t.id==='tcproxy'){tcCfg().corsProxy=t.checked;save()}
   else if(t.id==='me'){S.me=t.value.trim();save()}
   else if(t.id==='dkrev'){drv().revolut=t.value.trim();save();startDrive()}
   else if(t.id==='bg'){S.budgets.global=parseFloat(t.value)||0;save()}
