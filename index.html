@@ -10,7 +10,6 @@
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Figtree:wght@400;500;600&display=swap">
 <style>
-/* Layout: single-column phone app. Sticky header, scrolling content, fixed bottom tab bar. Max 560px on wide screens. */
 :root{
   --bg:#EDF0EB; --surface:#FFFFFF; --surface2:#E3E9E2; --fg:#15211C; --muted:#5A6A62; --line:#D3DCD4;
   --accent:#0E6B5A; --accent-ink:#FFFFFF; --bar:#BCC9C1; --warn:#A9690F; --bad:#B4382E; --good:#1D7A4C;
@@ -44,6 +43,7 @@ h2{font-size:17px;margin-bottom:10px}
 .between{justify-content:space-between}
 .grow{flex:1;min-width:0}
 .card{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:16px;min-width:0}
+.subcard{background:var(--bg);border:1px solid var(--line);border-radius:12px;padding:12px;min-width:0}
 .hero{padding:20px 18px}
 .label{font-size:11.5px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);font-weight:600}
 .chip{display:inline-flex;align-items:center;gap:4px;border-radius:999px;padding:2px 9px;font-size:12.5px;font-weight:600;background:var(--surface2);white-space:nowrap}
@@ -67,11 +67,12 @@ input,select,textarea,button{font:inherit;color:inherit}
 input[type=text],input[type=url],input[type=number],input[type=search],input[type=date],select,textarea{width:100%;padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:var(--surface);min-width:0}
 textarea{min-height:90px;resize:vertical}
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-.btn{border:0;border-radius:10px;padding:10px 16px;background:var(--accent);color:var(--accent-ink);font-weight:600;cursor:pointer}
+.btn{border:0;border-radius:10px;padding:10px 16px;background:var(--accent);color:var(--accent-ink);font-weight:600;cursor:pointer;white-space:nowrap}
 .btn:disabled{opacity:.55;cursor:not-allowed}
 .btn.sec{background:var(--surface2);color:var(--fg)}
 .btn.danger{background:transparent;color:var(--bad);border:1px solid var(--line)}
 .btn.sm{padding:6px 12px;font-size:13px}
+.btn.xs{padding:4px 9px;font-size:12px;border-radius:8px}
 .seg{display:flex;gap:6px;flex-wrap:wrap}
 .seg button{border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:5px 12px;font-size:13px;cursor:pointer}
 .seg button[aria-pressed=true]{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
@@ -119,7 +120,6 @@ hr{border:0;border-top:1px solid var(--line);margin:12px 0}
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script>
-/*LOGIC*/
 const CATS=['Alimentation','Restaurants','Transport','Logement','Abonnements','Loisirs','Voyages','Santé','Shopping','Autre'];
 const CAT_COL=['#2E9E83','#E08A3C','#4C7FD0','#8E6BC4','#D9577A','#C9A227','#3FA7C9','#7BAE3F','#B0643C','#7A8A84'];
 const CAT_RULES=[
@@ -168,7 +168,7 @@ function detectSource(H){
   if(H.some(x=>/completed date|date de fin|started date|date de debut/.test(x)))return'revolut';
   if(H.some(x=>/paid by|paye par|payeur|qui a paye/.test(x)))return'tricount';return null}
 function rateOf(cur,S,warn){cur=(cur||'EUR').toUpperCase();if(cur==='EUR')return 1;if(S.rates[cur]==null){S.rates[cur]=1;warn.push(cur)}return S.rates[cur]}
-function importText(text,hint,S){
+function importText(text,hint,S,groupName,groupKey){
   const rows=parseCSV(text);if(rows.length<2)throw new Error('fichier vide ou illisible');
   const hi=rows.findIndex(r=>r.filter(x=>x.trim()).length>=3);if(hi<0)throw new Error('en-têtes introuvables');
   const head=rows[hi].map(x=>x.trim()),H=head.map(normH);
@@ -179,6 +179,7 @@ function importText(text,hint,S){
   const iDate=src==='revolut'?idx([/completed date/,/date de fin/,/^date$/,/started date/,/date de debut/]):idx([/^date$/,/^date de /]);
   if(iDate<0||iAmt<0||iDesc<0)throw new Error('colonnes date, description ou montant introuvables');
   const warn=[];const counts={};const existing=new Set(S.tx.map(t=>t.id));let added=0,skipped=0;
+  const meNames=String(S.me||'').split(',').map(normH).filter(Boolean);
   if(src==='revolut'){
     const iFee=idx([/^fee$/,/^frais$/]),iState=idx([/^state$/,/^etat$/,/^statut$/]);
     for(const r of rows.slice(hi+1)){
@@ -193,7 +194,8 @@ function importText(text,hint,S){
     const iPaid=idx([/paid by/,/paye par/,/payeur/]);
     const known=/^(title|titre|description|libelle|objet|amount|montant|currency|devise|exchange|taux|rate|paid|paye|payeur|date|category|categorie|type|note|notes|id|nb|number)/;
     const parts=head.map((h,j)=>j).filter(j=>!known.test(H[j])&&H[j]&&rows.slice(hi+1).some(r=>!isNaN(parseNum(r[j]))));
-    const meN=normH(S.me);let iMe=meN?parts.find(j=>H[j].includes(meN)):undefined;if(iMe===undefined)iMe=-1;
+    let iMe=meNames.length?parts.find(j=>meNames.some(mn=>H[j].includes(mn))):undefined;
+    if(iMe===undefined)iMe=-1;
     for(const r of rows.slice(hi+1)){
       const date=parseDate(r[iDate]),total0=parseNum(r[iAmt]),desc=(r[iDesc]||'').trim(),type=iType>=0?normH(r[iType]):'';
       if(!date||isNaN(total0)||total0<=0||/rembours|reimburs|transfer|balance/.test(type)){skipped++;continue}
@@ -203,12 +205,21 @@ function importText(text,hint,S){
       else if(parts.length){const n=parts.filter(j=>!isNaN(parseNum(r[j]))&&parseNum(r[j])!==0).length||parts.length;share=total/n}
       else share=total;
       const amt=Math.round(share*100)/100;
-      const base='tricount|'+date+'|'+desc.toLowerCase()+'|'+total.toFixed(2)+'|'+amt.toFixed(2);counts[base]=(counts[base]||0)+1;const id=base+'#'+counts[base];
-      if(existing.has(id)){skipped++;continue}
-      S.tx.push({id,src:'tricount',date,desc,amt,total,paidBy:iPaid>=0?r[iPaid].trim():'',cur,cat:categorize(desc,S.learn),ex:false,dup:false});existing.add(id);added++}
+      const base='tricount|'+date+'|'+desc.toLowerCase()+'|'+total.toFixed(2)+'|'+amt.toFixed(2);counts[base]=(counts[base]||0)+1;
+      let id=base+'#'+counts[base];
+      if(existing.has(id)){
+        const prev=S.tx.find(t=>t.id===id);
+        if(prev&&(!prev.group||!groupName||prev.group===groupName)){
+          if(groupName&&!prev.group)prev.group=groupName;
+          skipped++;continue;
+        }
+        id=base+'|'+(groupKey||groupName||'g')+'#'+counts[base];
+        if(existing.has(id)){skipped++;continue;}
+      }
+      S.tx.push({id,src:'tricount',group:groupName||'',date,desc,amt,total,paidBy:iPaid>=0?r[iPaid].trim():'',cur,cat:categorize(desc,S.learn),ex:false,dup:false});existing.add(id);added++}
   }
   reconcile(S.tx);
-  return{added,skipped,src,warn,noMe:src==='tricount'&&!S.me}}
+  return{added,skipped,src,warn,noMe:src==='tricount'&&!meNames.length}}
 function reconcile(tx){
   tx.forEach(t=>{t.dup=false;delete t.dupOf});
   const used=new Set(),tri=tx.filter(t=>t.src==='tricount'&&t.total);
@@ -268,7 +279,7 @@ function suggestions(S,today){
   const fees=sumR(S.tx,addDays(today,-90),today,t=>t.fee>0)&&S.tx.filter(t=>counted(t)&&t.date>=addDays(today,-90)).reduce((a,t)=>a+(t.fee||0),0);
   if(fees>=3)out.push({t:'Frais Revolut',d:`${fmt(fees)} de frais sur 90 jours (retraits, change, plan). Vérifie ton forfait et tes limites gratuites.`,save:Math.round(fees*4)});
   const sh=S.tx.filter(t=>counted(t)&&t.src==='tricount'&&t.date>=P.ms).reduce((a,t)=>a+t.amt,0);
-  if(sh>0)out.push({t:'Dépenses partagées',d:`Ta part Tricount ce mois-ci : ${fmt(sh)}. Pense à solder le groupe pour éviter les oublis.`,save:0});
+  if(sh>0)out.push({t:'Dépenses partagées',d:`Ta part Tricount ce mois-ci : ${fmt(sh)}. Pense à solder tes groupes pour éviter les oublis.`,save:0});
   return out}
 const nf=new Intl.NumberFormat('fr-FR',{style:'currency',currency:'EUR'});
 const fmt=n=>nf.format(n);
@@ -333,13 +344,11 @@ function driveErr(e){const c=e&&e.code;
   if(c==='approval_required'||c==='not_in_manifest'||c==='consent_required'||c==='not_granted')return'Autorisation requise : clique sur « Connecter Google Drive » et accepte.';
   if(c==='blocked_by_policy')return'Ton organisation bloque cet accès à Google Drive.';
   return'Lecture de Drive impossible : '+((e&&e.message)||'erreur inconnue');}
-/*ENDLOGIC*/
-</script>
 
-<script>
 const LS='capdepenses.v1';
 const DAY_MS=24*60*60*1000;
 const todayStr=()=>ymd(new Date());
+const genId=()=>'tc_'+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
 function demoTx(today){
   let seed=7;const rnd=()=>{seed=(seed*16807)%2147483647;return(seed-1)/2147483646};
   const tx=[];let n=0;
@@ -349,9 +358,9 @@ function demoTx(today){
   for(let k=0;k<5;k++){const base=addMonths(today,-k);
     [['Netflix',13.49,5],['Spotify',10.99,12],['Basic-Fit',29.9,1],['iCloud',2.99,20],['Loyer',520,3]].forEach(([d,a,day])=>{const ds=base.slice(0,8)+String(day).padStart(2,'0');if(ds<=today&&diffDays(today,ds)<=130)add('revolut',ds,d,a)})}
   add('revolut',addDays(today,-2),'Restaurant Chez Paul',60);
-  add('tricount',addDays(today,-2),'Restaurant Chez Paul',20,{total:60,paidBy:'Moi'});
-  add('tricount',addDays(today,-5),'Courses colocation',28,{total:84,paidBy:'Léa'});
-  add('tricount',addDays(today,-12),'Airbnb Biarritz',60,{total:240,paidBy:'Tom'});
+  add('tricount',addDays(today,-2),'Restaurant Chez Paul',20,{group:'Coloc',total:60,paidBy:'Moi'});
+  add('tricount',addDays(today,-5),'Courses colocation',28,{group:'Coloc',total:84,paidBy:'Léa'});
+  add('tricount',addDays(today,-12),'Airbnb Biarritz',60,{group:'Week-end',total:240,paidBy:'Tom'});
   return tx}
 function defaults(demo){
   const s={
@@ -365,20 +374,33 @@ function defaults(demo){
     notified:{},
     demo:false,
     drive:{enabled:false,revolut:'revolut',seen:{}},
-    tricountSync:{enabled:true,url:'',customProxy:'',corsProxy:true,lastSync:0,msg:'',err:'',session:null}
+    tricountSync:{enabled:true,groups:[{id:genId(),url:'',title:'',lastSync:0,msg:'',err:''}],customProxy:'',lastSync:0,msg:'',err:''}
   };
   if(demo){s.tx=demoTx(todayStr());s.demo=true;reconcile(s.tx)}
   return s}
+function migrateTricount(tc){
+  if(!tc||typeof tc!=='object')return{enabled:true,groups:[{id:genId(),url:'',title:'',lastSync:0,msg:'',err:''}],customProxy:'',lastSync:0,msg:'',err:''};
+  if(!Array.isArray(tc.groups))tc.groups=[];
+  if(tc.url&&tc.url.trim()){
+    const oldUrl=tc.url.trim();
+    if(!tc.groups.some(g=>g.url&&g.url.trim()===oldUrl)){
+      tc.groups.unshift({id:genId(),url:oldUrl,title:'',lastSync:tc.lastSync||0,msg:tc.msg||'',err:tc.err||''});
+    }
+    delete tc.url;
+  }
+  if(!tc.groups.length)tc.groups.push({id:genId(),url:'',title:'',lastSync:0,msg:'',err:''});
+  return tc}
 function load(){
   try{
     const j=JSON.parse(localStorage.getItem(LS));
     if(j&&j.tx){
       const d=defaults(false);
-      return Object.assign(d,j,{
+      const merged=Object.assign(d,j,{
         budgets:Object.assign(d.budgets,j.budgets||{}),
         drive:Object.assign(d.drive,j.drive||{}),
-        tricountSync:Object.assign(d.tricountSync,j.tricountSync||{})
+        tricountSync:migrateTricount(Object.assign(d.tricountSync,j.tricountSync||{}))
       });
+      return merged;
     }
   }catch(e){}
   return defaults(true)}
@@ -398,11 +420,9 @@ const TABS=[
   ['reglages','Réglages','<path d="M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1"/><circle cx="15" cy="6" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="18" r="2"/>']
 ];
 
-/* ---------- Synchronisation directe Tricount (1x / jour) ---------- */
-let tcBusy=false;
-const TC_API='https://api.tricount.bunq.com';
+let tcBusyId='';
 function tcCfg(){
-  if(!S.tricountSync||typeof S.tricountSync!=='object')S.tricountSync={enabled:true,url:'',customProxy:'',corsProxy:true,lastSync:0,msg:'',err:'',session:null};
+  S.tricountSync=migrateTricount(S.tricountSync);
   return S.tricountSync}
 
 function extractTricountKey(raw){
@@ -415,25 +435,6 @@ function extractTricountKey(raw){
   }catch(e){
     return s.replace(/^\/+|\/+$/g,'');
   }
-}
-
-function genUUID(){
-  if(typeof crypto!=='undefined'&&crypto.randomUUID)return crypto.randomUUID();
-  return'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g,c=>{const r=Math.random()*16|0;return(c==='x'?r:(r&0x3|0x8)).toString(16)});
-}
-
-async function generateRsaPublicKeyPem(){
-  if(!window.crypto||!window.crypto.subtle)throw new Error("Ce navigateur bloque WebCrypto (ouvre l'application via https://).");
-  const kp=await crypto.subtle.generateKey(
-    {name:'RSASSA-PKCS1-v1_5',modulusLength:2048,publicExponent:new Uint8Array([1,0,1]),hash:'SHA-256'},
-    true,
-    ['sign','verify']
-  );
-  const spki=await crypto.subtle.exportKey('spki',kp.publicKey);
-  const bytes=new Uint8Array(spki);
-  let bin='';for(let i=0;i<bytes.length;i++)bin+=String.fromCharCode(bytes[i]);
-  const b64=btoa(bin).match(/.{1,64}/g).join('\n');
-  return`-----BEGIN PUBLIC KEY-----\n${b64}\n-----END PUBLIC KEY-----`;
 }
 
 function memberDisplayName(m){
@@ -502,61 +503,103 @@ async function fetchViaCustomWorker(customUrl,key){
   return json;
 }
 
-async function syncTricountDirect(isAuto=false){
+function readTricountInputsFromDom(){
   const cfg=tcCfg();
-  if(tcBusy)return;
-  const key=extractTricountKey(cfg.url);
-  if(!key){
-    if(!isAuto){cfg.err='Colle ton lien de partage Tricount (ex. https://tricount.com/...) avant de synchroniser.';save();render()}
+  if($('tccustom'))cfg.customProxy=$('tccustom').value.trim();
+  if($('me'))S.me=$('me').value.trim();
+  if($('tcenabled'))cfg.enabled=$('tcenabled').checked;
+  document.querySelectorAll('.tcurl').forEach(inp=>{
+    const g=cfg.groups.find(x=>x.id===inp.dataset.gid);
+    if(g)g.url=inp.value.trim();
+  });
+  save();
+}
+
+async function syncGroupInternal(g,custom){
+  const key=extractTricountKey(g.url);
+  if(!key){g.err='Colle un lien Tricount valide.';return}
+  g.err='';
+  try{
+    const data=await fetchViaCustomWorker(custom,key);
+    const regItem=(data.Response||[]).find(x=>x.Registry);
+    if(!regItem||!regItem.Registry)throw new Error('Groupe Tricount introuvable. Vérifie le lien de partage.');
+    if(regItem.Registry.title)g.title=regItem.Registry.title;
+    const csvText=registryToCsv(regItem.Registry);
+    if(S.demo){S.tx=S.tx.filter(t=>!String(t.id).startsWith('demo'));S.demo=false}
+    const r=importText(csvText,'tricount',S,g.title,key);
+    g.lastSync=Date.now();
+    g.err='';
+    g.msg=`${r.added} nouvelle${r.added>1?'s':''} (${r.skipped} déjà présente${r.skipped>1?'s':''}).`+(r.noMe?' Indique ton prénom Tricount.':'');
+  }catch(e){
+    g.err=e&&e.message?e.message:'Erreur de synchronisation.';
+  }
+}
+
+async function syncSingleTricount(gid){
+  if(tcBusyId)return;
+  readTricountInputsFromDom();
+  const cfg=tcCfg();
+  const g=cfg.groups.find(x=>x.id===gid);
+  if(!g)return;
+  const custom=(cfg.customProxy||'').trim();
+  if(!custom){g.err='Renseigne d’abord ton relais Cloudflare ci-dessus.';save();render();return}
+  tcBusyId=gid;
+  cfg.err='';
+  render();
+  await syncGroupInternal(g,custom);
+  if(!g.err)cfg.lastSync=Date.now();
+  tcBusyId='';
+  save();
+  const ae=document.activeElement;
+  if(!(ae&&/INPUT|TEXTAREA|SELECT/.test(ae.tagName)))render();
+}
+
+async function syncAllTricounts(isAuto=false){
+  if(tcBusyId)return;
+  if(!isAuto)readTricountInputsFromDom();
+  const cfg=tcCfg();
+  const activeGroups=cfg.groups.filter(g=>g.url&&g.url.trim());
+  if(!activeGroups.length){
+    if(!isAuto){cfg.err='Ajoute au moins un lien de partage Tricount.';save();render()}
     return;
   }
   const custom=(cfg.customProxy||'').trim();
   if(!custom){
-    if(!isAuto){cfg.err='Renseigne d’abord l’adresse de ton relais Cloudflare (https://...workers.dev).';save();render()}
+    if(!isAuto){cfg.err='Renseigne d’abord ton relais Cloudflare.';save();render()}
     return;
   }
-  tcBusy=true;
+  tcBusyId='all';
   cfg.err='';
   render();
-  try{
-    const data=await fetchViaCustomWorker(custom,key);
-    const regItem=(data.Response||[]).find(x=>x.Registry);
-    if(!regItem||!regItem.Registry)throw new Error('Groupe Tricount introuvable. Vérifie que ton lien de partage est bien actif.');
-    const csvText=registryToCsv(regItem.Registry);
-    if(S.demo){S.tx=S.tx.filter(t=>!String(t.id).startsWith('demo'));S.demo=false}
-    const r=importText(csvText,'tricount',S);
-    cfg.lastSync=Date.now();
-    cfg.err='';
-    const groupTitle=regItem.Registry.title?`« ${regItem.Registry.title} » : `:'';
-    cfg.msg=`${groupTitle}${r.added} nouvelle${r.added>1?'s':''} dépense${r.added>1?'s':''} importée${r.added>1?'s':''} (${r.skipped} déjà présente${r.skipped>1?'s':''}).`+(r.noMe?' Indique ton prénom Tricount pour ta part exacte.':'');
-    save();
-  }catch(e){
-    cfg.err=e&&e.message?e.message:'Erreur de synchronisation Tricount.';
-    save();
-  }finally{
-    tcBusy=false;
-    const ae=document.activeElement;
-    if(!(ae&&/INPUT|TEXTAREA|SELECT/.test(ae.tagName)))render();
+  for(const g of activeGroups){
+    if(isAuto&&g.lastSync&&(Date.now()-g.lastSync<DAY_MS))continue;
+    await syncGroupInternal(g,custom);
   }
+  cfg.lastSync=Date.now();
+  tcBusyId='';
+  save();
+  const ae=document.activeElement;
+  if(!(ae&&/INPUT|TEXTAREA|SELECT/.test(ae.tagName)))render();
 }
 
 function checkDailyTricountSync(){
   const cfg=tcCfg();
-  if(!cfg.enabled||!cfg.url||!cfg.url.trim()||!(cfg.customProxy||'').trim()||tcBusy)return;
-  if(Date.now()-(cfg.lastSync||0)>=DAY_MS){
-    syncTricountDirect(true);
-  }
+  if(!cfg.enabled||!(cfg.customProxy||'').trim()||tcBusyId)return;
+  const due=cfg.groups.some(g=>g.url&&g.url.trim()&&(Date.now()-(g.lastSync||0)>=DAY_MS));
+  if(due)syncAllTricounts(true);
 }
 
 function chip(c,p){if(p===null)return'<span class="chip flat">nouveau</span>';const r=Math.round(p);if(Math.abs(r)<1)return'<span class="chip flat">= stable</span>';return`<span class="chip ${r>0?'up':'down'}">${r>0?'▲ +':'▼ '}${r} %</span>`}
 function txRow(t){
+  const srcLabel=t.src==='tricount'?(t.group?`Tricount (${esc(t.group)})`:'Tricount'):t.src==='revolut'?'Revolut':'Manuel';
   return`<button class="tx ${t.dup?'dup':''}" data-act="edit" data-id="${esc(t.id)}"><span class="avatar" style="background:${catCol(t.cat)}" aria-hidden="true">${esc((t.desc||'?').trim().charAt(0).toUpperCase())}</span>
-  <span class="t"><div><b>${esc(t.desc)}</b></div><div class="xs muted">${shortDate(t.date)} · ${esc(t.cat)} · ${t.src==='tricount'?'Tricount':t.src==='revolut'?'Revolut':'Manuel'}${t.src==='tricount'&&t.total&&t.total!==t.amt?` · ma part sur ${fmt(t.total)}`:''}${t.dup?' · doublon Tricount':''}${t.ex?' · exceptionnelle':''}</div></span><span class="amt">${fmt(t.amt)}</span></button>`}
+  <span class="t"><div><b>${esc(t.desc)}</b></div><div class="xs muted">${shortDate(t.date)} · ${esc(t.cat)} · ${srcLabel}${t.src==='tricount'&&t.total&&t.total!==t.amt?` · ma part sur ${fmt(t.total)}`:''}${t.dup?' · doublon Tricount':''}${t.ex?' · exceptionnelle':''}</div></span><span class="amt">${fmt(t.amt)}</span></button>`}
 function render(){
   $('demobadge').hidden=!S.demo;
   const cfg=tcCfg(),tb=$('tcbadge');
-  if(tcBusy){tb.hidden=false;tb.textContent='Sync Tricount…'}
-  else if(cfg.enabled&&cfg.lastSync){tb.hidden=false;tb.textContent='Tricount 24h ✓'}
+  const activeCount=cfg.groups.filter(g=>g.url&&g.url.trim()).length;
+  if(tcBusyId){tb.hidden=false;tb.textContent='Sync Tricount…'}
+  else if(cfg.enabled&&activeCount&&cfg.lastSync){tb.hidden=false;tb.textContent=`Tricount (${activeCount}) ✓`}
   else{tb.hidden=true}
   $('nav').innerHTML=TABS.map(([k,n,p])=>`<button data-act="tab" data-tab="${k}" ${tab===k?'aria-current="page"':''}><svg viewBox="0 0 24 24" aria-hidden="true">${p}</svg>${n}</button>`).join('');
   const t=todayStr(),fn={accueil:rHome,depenses:rTx,analyses:rAna,economies:rSave,assistant:rChat,reglages:rSet}[tab];
@@ -569,7 +612,7 @@ function rHome(t){
   const bp=B.global>0?P.month/B.global*100:0;
   const top=Object.entries(cm).sort((a,b)=>b[1]-a[1]).slice(0,5);
   const rec=[...S.tx].filter(x=>!x.dup).sort((a,b)=>a.date<b.date?1:a.date>b.date?-1:0).slice(0,5);
-  return`${S.demo?`<div class="alert info"><div><b>Tu vois des données d'exemple</b><span class="small muted">Colle ton lien Tricount et importe ton relevé Revolut dans Réglages pour les remplacer.</span></div></div>`:''}
+  return`${S.demo?`<div class="alert info"><div><b>Tu vois des données d'exemple</b><span class="small muted">Colle tes liens Tricount et importe ton relevé Revolut dans Réglages pour les remplacer.</span></div></div>`:''}
   <section class="card hero stack" style="gap:12px"><div class="label">Dépensé en ${monthName(t)}</div>
     <div class="row between" style="align-items:flex-end;flex-wrap:wrap"><div class="big">${fmt(P.month)}</div><div class="stack" style="gap:2px;align-items:flex-end">${chip('',pct(P.month,P.monthPrev))}<span class="xs muted">vs ${fmt(P.monthPrev)} au même jour le mois dernier</span></div></div>
     ${B.global>0?`<div><div class="meter" role="img" aria-label="Budget utilisé à ${Math.round(bp)} pour cent"><i class="${bp>=100?'bad':bp>=S.pct?'warn':''}" style="width:${Math.min(bp,100)}%"></i></div>
@@ -581,18 +624,20 @@ function rHome(t){
   <section class="card"><h2>Où part l'argent ce mois-ci</h2>${top.length?top.map(([c,v])=>`<div class="row between" style="padding:6px 0"><span class="row"><span class="dot" style="background:${catCol(c)}"></span>${esc(c)}</span><span class="row"><span class="num">${fmt(v)}</span>${chip('',pct(v,pm[c]||0))}</span></div>`).join(''):'<div class="empty">Aucune dépense ce mois-ci.</div>'}</section>
   <section class="card"><div class="row between"><h2 style="margin:0">Dernières dépenses</h2><button class="btn sec sm" data-act="tab" data-tab="depenses">Tout voir</button></div>${rec.map(txRow).join('')||'<div class="empty">Rien pour le moment.</div>'}</section>`}
 function rTx(){
-  return`<div class="stack" style="gap:10px"><input type="search" id="fq" placeholder="Rechercher un commerçant, une note…" value="${esc(F.q)}" aria-label="Rechercher">
-  <div class="grid2"><select id="fsrc" aria-label="Source"><option value="all">Toutes les sources</option><option value="revolut">Revolut</option><option value="tricount">Tricount</option><option value="manuel">Manuel</option></select>
+  const groups=[...new Set(S.tx.filter(x=>x.src==='tricount'&&x.group).map(x=>x.group))];
+  return`<div class="stack" style="gap:10px"><input type="search" id="fq" placeholder="Rechercher un commerçant, un Tricount, une note…" value="${esc(F.q)}" aria-label="Rechercher">
+  <div class="grid2"><select id="fsrc" aria-label="Source"><option value="all">Toutes les sources</option><option value="revolut">Revolut</option><option value="tricount">Tricount (tous)</option><option value="manuel">Manuel</option></select>
   <select id="fcat" aria-label="Catégorie"><option value="all">Toutes catégories</option>${CATS.map(c=>`<option>${c}</option>`).join('')}</select></div>
   <div class="grid2"><select id="fsort" aria-label="Tri"><option value="date">Plus récentes</option><option value="old">Plus anciennes</option><option value="big">Montant décroissant</option><option value="small">Montant croissant</option></select>
-  <select id="fscope" aria-label="Période"><option value="all">Toute la période</option><option value="week">Cette semaine</option><option value="month">Ce mois-ci</option><option value="shared">Partagées (Tricount)</option><option value="perso">Perso (Revolut)</option></select></div>
+  <select id="fscope" aria-label="Période"><option value="all">Toute la période</option><option value="week">Cette semaine</option><option value="month">Ce mois-ci</option><option value="shared">Partagées (Tricount)</option><option value="perso">Perso (Revolut)</option>${groups.map(g=>`<option value="grp:${esc(g)}">Tricount : ${esc(g)}</option>`).join('')}</select></div>
   <div class="row between"><span class="small muted" id="fsum"></span><button class="btn sm" data-act="add">+ Ajouter</button></div></div>
   <section class="card" id="txlist"></section>`}
 function rTxList(){
-  $('fsrc').value=F.src;$('fcat').value=F.cat;$('fsort').value=F.sort;$('fscope').value=F.scope;
+  $('fsrc').value=F.src;$('fcat').value=F.cat;$('fsort').value=F.sort;
+  if([...$('fscope').options].some(o=>o.value===F.scope))$('fscope').value=F.scope;else F.scope='all';
   const t=todayStr(),ws=weekStart(t),ms=monthStart(t),q=normH(F.q);
-  let a=S.tx.filter(x=>(F.src==='all'||x.src===F.src)&&(F.cat==='all'||x.cat===F.cat)&&(!q||normH(x.desc+' '+(x.note||'')+' '+x.cat).includes(q))
-    &&(F.scope==='all'||(F.scope==='week'&&x.date>=ws)||(F.scope==='month'&&x.date>=ms)||(F.scope==='shared'&&x.src==='tricount')||(F.scope==='perso'&&x.src!=='tricount')));
+  let a=S.tx.filter(x=>(F.src==='all'||x.src===F.src)&&(F.cat==='all'||x.cat===F.cat)&&(!q||normH(x.desc+' '+(x.note||'')+' '+x.cat+' '+(x.group||'')).includes(q))
+    &&(F.scope==='all'||(F.scope==='week'&&x.date>=ws)||(F.scope==='month'&&x.date>=ms)||(F.scope==='shared'&&x.src==='tricount')||(F.scope==='perso'&&x.src!=='tricount')||(F.scope.startsWith('grp:')&&x.src==='tricount'&&x.group===F.scope.slice(4))));
   a.sort((x,y)=>F.sort==='old'?(x.date<y.date?-1:1):F.sort==='big'?y.amt-x.amt:F.sort==='small'?x.amt-y.amt:(x.date<y.date?1:x.date>y.date?-1:0));
   const tot=a.filter(counted).reduce((s,x)=>s+x.amt,0);
   $('fsum').textContent=`${a.length} dépenses · ${fmt(tot)}`;
@@ -629,36 +674,50 @@ function rSet(t){
   const D=drv();
   const TC=tcCfg();
   const fmtSyncDate=ts=>ts?new Intl.DateTimeFormat('fr-FR',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}).format(new Date(ts)):'jamais';
+  const activeCount=TC.groups.filter(g=>g.url&&g.url.trim()).length;
+
+  const groupsHtml=TC.groups.map((g,idx)=>{
+    const isBusy=tcBusyId===g.id||tcBusyId==='all';
+    return`<div class="subcard stack" style="gap:8px">
+      <div class="row between">
+        <span class="small"><b>${esc(g.title||`Tricount #${idx+1}`)}</b></span>
+        <div class="row" style="gap:6px">
+          <span class="xs muted">Synchro : ${fmtSyncDate(g.lastSync)}</span>
+          ${TC.groups.length>1?`<button class="btn danger xs" data-act="tcdel" data-gid="${esc(g.id)}" aria-label="Supprimer ce Tricount">✕</button>`:''}
+        </div>
+      </div>
+      <input type="url" class="tcurl" data-gid="${esc(g.id)}" value="${esc(g.url)}" placeholder="https://tricount.com/...">
+      <div class="row between" style="flex-wrap:wrap;gap:6px">
+        <button class="btn sec xs" data-act="tcsync1" data-gid="${esc(g.id)}" ${tcBusyId?'disabled':''}>${isBusy?'Synchro…':'Synchroniser ce groupe'}</button>
+        ${g.msg?`<span class="xs" style="color:var(--good)">${esc(g.msg)}</span>`:''}
+        ${g.err?`<span class="xs" style="color:var(--bad)">${esc(g.err)}</span>`:''}
+      </div>
+    </div>`;
+  }).join('');
 
   const tricountCard=`<section class="card stack">
     <div class="row between">
-      <h2 style="margin:0">Tricount automatique (1x / jour)</h2>
-      <span class="pill">${tcBusy?'Synchro…':TC.enabled?'Auto 24h':'Manuel'}</span>
+      <h2 style="margin:0">Tricounts automatiques (1x / jour)</h2>
+      <span class="pill">${tcBusyId?'Synchro…':`${activeCount} actif${activeCount>1?'s':''} · Auto 24h`}</span>
     </div>
-    <p class="small muted" style="margin:0">Dans l'appli Tricount, ouvre ton groupe, appuie sur <b>Partager</b> et copie le lien. L'application le lit via ton relais Cloudflare et l'actualise <b>une fois par jour</b>.</p>
+    <p class="small muted" style="margin:0">Dans Tricount, ouvre chaque groupe → <b>Partager</b> → copie le lien. Tous tes groupes se synchronisent automatiquement <b>une fois par jour</b>.</p>
     <div class="field">
-      <label for="tcurl">Lien de partage Tricount</label>
-      <input type="url" id="tcurl" value="${esc(TC.url)}" placeholder="https://tricount.com/...">
-    </div>
-    <div class="field">
-      <label for="me">Ton prénom dans Tricount (pour calculer ta part exacte)</label>
+      <label for="me">Ton prénom dans Tricount (sépare par une virgule si plusieurs, ex. Vic, Victorien)</label>
       <input type="text" id="me" value="${esc(S.me)}" placeholder="ex. Vic">
     </div>
     <div class="field">
       <label for="tccustom">Relais Cloudflare personnel</label>
       <input type="url" id="tccustom" value="${esc(TC.customProxy)}" placeholder="https://relais-tricount.victorien-peche.workers.dev">
     </div>
+    <div class="stack" style="gap:10px">${groupsHtml}</div>
+    <div><button class="btn sec sm" data-act="tcadd">+ Ajouter un autre Tricount</button></div>
     <label class="row between small" style="cursor:pointer">
-      <span>Actualiser automatiquement 1 fois par jour (toutes les 24 h)</span>
+      <span>Actualiser automatiquement tous les groupes 1 fois par jour (toutes les 24 h)</span>
       <input type="checkbox" id="tcenabled" ${TC.enabled?'checked':''}>
     </label>
     <div class="row" style="flex-wrap:wrap">
-      <button class="btn" data-act="tcsync" ${tcBusy?'disabled':''}>${tcBusy?'Synchronisation en cours…':'Synchroniser maintenant'}</button>
+      <button class="btn" data-act="tcsyncall" ${tcBusyId?'disabled':''}>${tcBusyId?'Synchronisation en cours…':'Tout synchroniser maintenant'}</button>
     </div>
-    <div class="xs muted">
-      Dernière synchro : <b>${fmtSyncDate(TC.lastSync)}</b>${TC.enabled&&TC.lastSync?` · Prochaine auto : <b>${fmtSyncDate(TC.lastSync+DAY_MS)}</b>`:''}
-    </div>
-    ${TC.msg?`<div class="small" style="color:var(--good)">${esc(TC.msg)}</div>`:''}
     ${TC.err?`<div class="small" style="color:var(--bad)">${esc(TC.err)}</div>`:''}
   </section>`;
 
@@ -710,7 +769,7 @@ function saveEdit(id){
 function notify(t){
   if(typeof Notification==='undefined'||Notification.permission!=='granted')return;
   try{for(const a of computeAlerts(S,t)){const k=a.id+t;if(S.notified[k])continue;S.notified[k]=1;new Notification(a.t,{body:a.d})}save()}catch(e){}}
-/* ---------- Lecture automatique Revolut depuis Google Drive (capacité mcp) ---------- */
+
 let MCP=null;const unsub={};const dstat={revolut:'',msg:'',busy:false,at:0};
 const DKEYS=['revolut'];
 function drv(){if(!S.drive||typeof S.drive!=='object')S.drive={enabled:false,revolut:'revolut',seen:{}};if(!S.drive.seen)S.drive.seen={};return S.drive}
@@ -764,14 +823,10 @@ document.addEventListener('click',async e=>{
   else if(a==='closesheet')$('sheet').remove();
   else if(a==='saveedit')saveEdit(b.dataset.id);
   else if(a==='del'){const x=S.tx.find(t=>t.id===b.dataset.id);if(x&&(x.src==='revolut'||x.src==='tricount')&&!String(x.id).startsWith('demo'))x.ex=true;else S.tx=S.tx.filter(t=>t.id!==b.dataset.id);reconcile(S.tx);save();$('sheet').remove();render()}
-  else if(a==='tcsync'){
-    if($('tcurl'))tcCfg().url=$('tcurl').value.trim();
-    if($('tccustom'))tcCfg().customProxy=$('tccustom').value.trim();
-    if($('me'))S.me=$('me').value.trim();
-    if($('tcenabled'))tcCfg().enabled=$('tcenabled').checked;
-    save();
-    syncTricountDirect(false);
-  }
+  else if(a==='tcadd'){readTricountInputsFromDom();tcCfg().groups.push({id:genId(),url:'',title:'',lastSync:0,msg:'',err:''});save();render()}
+  else if(a==='tcdel'){readTricountInputsFromDom();const cfg=tcCfg();if(cfg.groups.length>1){cfg.groups=cfg.groups.filter(g=>g.id!==b.dataset.gid);save();render()}}
+  else if(a==='tcsync1'){syncSingleTricount(b.dataset.gid)}
+  else if(a==='tcsyncall'){syncAllTricounts(false)}
   else if(a==='driveon')driveConnect();
   else if(a==='driverefresh')driveRefresh();
   else if(a==='driveoff'){drv().enabled=false;for(const k of DKEYS){if(unsub[k]){unsub[k]();unsub[k]=null}}save();render()}
@@ -783,7 +838,7 @@ document.addEventListener('click',async e=>{
 });
 document.addEventListener('change',e=>{const t=e.target;
   if(t.id==='files'){handleFiles(t.files)}
-  else if(t.id==='tcurl'){tcCfg().url=t.value.trim();save()}
+  else if(t.classList.contains('tcurl')){const g=tcCfg().groups.find(x=>x.id===t.dataset.gid);if(g){g.url=t.value.trim();save()}}
   else if(t.id==='tccustom'){tcCfg().customProxy=t.value.trim();save()}
   else if(t.id==='tcenabled'){tcCfg().enabled=t.checked;save();if(t.checked)checkDailyTricountSync();render()}
   else if(t.id==='me'){S.me=t.value.trim();save()}
@@ -794,7 +849,11 @@ document.addEventListener('change',e=>{const t=e.target;
   else if(t.id==='jump'){S.jump=Math.max(5,parseInt(t.value)||25);save()}
   else if(t.classList.contains('rate')){S.rates[t.dataset.cur]=parseFloat(t.value)||1;save()}
   else if(['fsrc','fcat','fsort','fscope'].includes(t.id)){F[t.id.slice(1)]=t.value;rTxList()}});
-document.addEventListener('input',e=>{if(e.target.id==='fq'){F.q=e.target.value;rTxList()}});
+document.addEventListener('input',e=>{const t=e.target;
+  if(t.id==='fq'){F.q=t.value;rTxList()}
+  else if(t.classList.contains('tcurl')){const g=tcCfg().groups.find(x=>x.id===t.dataset.gid);if(g){g.url=t.value.trim();save()}}
+  else if(t.id==='tccustom'){tcCfg().customProxy=t.value.trim();save()}
+  else if(t.id==='me'){S.me=t.value.trim();save()}});
 document.addEventListener('submit',e=>{if(e.target.id==='chatform'){e.preventDefault();ask($('chatin').value)}});
 
 reconcile(S.tx);
